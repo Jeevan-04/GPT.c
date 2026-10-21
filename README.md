@@ -1,114 +1,101 @@
 # GPT.c
 
-GPT implemented from scratch in C, covering the core architecture of a Generative Pre-trained Transformer—from token embeddings and positional encoding to self-attention, transformer blocks, and autoregressive text generation.
+GPT.c is an experimental implementation of a Generative Pre-trained Transformer
+written from scratch in C. The project is being built one small, independently
+tested module at a time.
 
-Each component is implemented as an independent C module, with its own header, source file, and documentation. The modules are tested individually before being integrated into the complete architecture.
+The current implementation includes:
 
-## Architecture & Progress
+- A PCG32-based pseudorandom number generator.
+- A trainable token-embedding table.
+- Tests for allocation, lookup, initialization, cleanup, and error handling.
+
+The transformer itself is still under development. The checklist below tracks
+the planned components.
+
+## Project status
+
+| Component | Status |
+| --- | --- |
+| [`rng/`](./rng/) — PCG32 pseudorandom number generator | Complete |
+| [`embedding/`](./embedding/) — token embeddings | Complete |
+| `tensor/` — tensor and matrix operations | Planned |
+| `tokenizer/` — tokenization and vocabulary | Planned |
+| `positional_encoding/` — positional encoding | Planned |
+| `linear/` — linear transformations | Planned |
+| `layer_norm/` — layer normalization | Planned |
+| `attention/` — scaled dot-product attention | Planned |
+| `multi_head_attention/` — causal multi-head self-attention | Planned |
+| `feed_forward/` — feed-forward network and GELU | Planned |
+| `transformer_block/` — transformer blocks and residual connections | Planned |
+| `gpt/` — complete GPT model | Planned |
+| `softmax/` and `generation/` — output probabilities and text generation | Planned |
+| `loss/`, `autograd/`, `optimizer/`, and `training/` | Planned |
+| `tests/`, `benchmarks/`, and Apple Accelerate support | Planned |
+
+## Architecture
+
+The target architecture is a decoder-only GPT-style transformer:
 
 ```text
-                      OUTPUT PROBABILITIES
-                               ^
-                               |
-                         +-----------+
-                         |  Softmax  |  [ ]
-                         +-----------+
-                               ^
-                               |
-                         +-----------+
-                         |  Linear   |  [ ]
-                         |  (Output) |
-                         +-----------+
-                               ^
-                               |
-              +================================+
-              |       TRANSFORMER BLOCK         |
-              |              N x                |
-              |                                 |
-              |   +-------------------------+   |
-              |   |   Layer Normalization   |   | [ ]
-              |   +-------------------------+   |
-              |                ^                |
-              |                |                |
-              |   +-------------------------+   |
-              |   | Feed-Forward Network    |   | [ ]
-              |   | Linear -> GELU ->       |   |
-              |   | Linear                  |   |
-              |   +-------------------------+   |
-              |                ^                |
-              |          Residual Add           | [ ]
-              |                ^                |
-              |   +-------------------------+   |
-              |   |   Layer Normalization   |   | [ ]
-              |   +-------------------------+   |
-              |                ^                |
-              |                |                |
-              |   +-------------------------+   |
-              |   | Masked Multi-Head       |   | [ ]
-              |   | Self-Attention           |   |
-              |   +-------------------------+   |
-              |                ^                |
-              |          Residual Add           | [ ]
-              +================|================+
-                               |
-                      +-------------------+
-                      | Token Embeddings  |  [x]
-                      | embedding/        |
-                      +-------------------+
-                               +
-                      +-------------------+
-                      | Positional        |  [ ]
-                      | Encoding          |
-                      +-------------------+
-                               ^
-                               |
-                      +-------------------+
-                      |   Input Tokens    |  [ ]
-                      +-------------------+
+Input token IDs
+      │
+      ├── Token embeddings
+      └── Positional encodings
+      │
+      ▼
+Masked multi-head self-attention
+      │
+      ▼
+Feed-forward network
+      │
+      └── Repeated transformer blocks
+      │
+      ▼
+Output projection → Softmax → Next-token probabilities
 ```
 
+The diagram describes the intended architecture. Only the RNG and embedding
+layers are implemented at this stage.
 
-**Note:** This diagram is a simplified GPT architecture. The residual connections and normalization order are schematic; we will define their exact mathematical operations when implementing the transformer block.
+## Build and run
 
-## Module Checklist
+The repository currently uses a small C test program in [`main.c`](./main.c).
+Build it with any C11-compatible compiler:
 
-### Core Infrastructure
-- [x] `rng/` — Pseudorandom Number Generator (PCG32)
-- [ ] `tensor/` — Tensor and Matrix Operations
-- [ ] `tokenizer/` — Tokenization and Vocabulary
+```sh
+cc -std=c11 -Wall -Wextra -Wpedantic \
+  main.c embedding/embedding.c rng/rng.c \
+  -lm -o embedding_test
+```
 
-### Input Representation
-- [x] `embedding/` — Token Embeddings
-- [ ] `positional_encoding/` — Positional Encoding
+Run the tests:
 
-### Transformer
-- [ ] `linear/` — Linear Transformation
-- [ ] `layer_norm/` — Layer Normalization
-- [ ] `attention/` — Scaled Dot-Product Attention
-- [ ] `multi_head_attention/` — Multi-Head Causal Self-Attention
-- [ ] `feed_forward/` — Feed-Forward Network and GELU
-- [ ] `transformer_block/` — Transformer Block and Residual Connections
-- [ ] `gpt/` — Complete GPT Architecture
+```sh
+./embedding_test
+```
 
-### Output
-- [ ] `output/` — Language Model Output Projection
-- [ ] `softmax/` — Probability Distribution
-- [ ] `generation/` — Autoregressive Text Generation and Sampling
+The test program exits with a non-zero status if a test fails.
 
-### Training
-- [ ] `loss/` — Cross-Entropy Loss
-- [ ] `autograd/` — Automatic Differentiation and Backpropagation
-- [ ] `optimizer/` — Adam Optimizer
-- [ ] `training/` — Training Loop and Batching
-- [ ] `checkpoint/` — Model Saving and Loading
+## Modules
 
-### Testing and Optimization
-- [ ] `tests/` — Unit and Integration Tests
-- [ ] `benchmarks/` — Performance Benchmarks
-- [ ] `accelerate/` — Apple Accelerate Integration
+- [`embedding/embedding.h`](./embedding/embedding.h) and
+  [`embedding/embedding.c`](./embedding/embedding.c) implement the embedding
+  table.
+- [`embedding/embedding.md`](./embedding/embedding.md) documents the data
+  layout, API, initialization, and memory ownership rules.
+- [`rng/rng.h`](./rng/rng.h) and [`rng/rng.c`](./rng/rng.c) implement the
+  deterministic PCG32 generator.
+- [`rng/rng.md`](./rng/rng.md) documents the generator and its intended use.
 
-## Current Status
+## Scope and limitations
 
-**Completed:** `rng/`, `embedding/`
+This project is educational and incomplete. The current modules do not provide
+tokenization, model training, automatic differentiation, inference, or text
+generation. The RNG is deterministic but is **not** suitable for passwords,
+cryptographic keys, or other security-sensitive purposes.
 
-**Next module:** `tensor/`
+## License
+
+No license has been added to this repository yet. Until a license is provided,
+please treat the source as all-rights-reserved.

@@ -1,40 +1,15 @@
-# Embedding Layer
+# Embedding layer
 
-## 1. Concept
+The embedding layer maps discrete token IDs to dense floating-point vectors.
+It stores the vectors in a single contiguous `float` array and exposes
+operations for allocation, lookup, initialization, and cleanup.
 
-A tokenizer converts text into token IDs. An embedding layer maps each token ID to a vector of floating-point numbers.
+Implementation:
 
-For example, if our vocabulary contains 100 tokens and each embedding has 8 dimensions:
+- [`embedding.h`](./embedding.h)
+- [`embedding.c`](./embedding.c)
 
-\[
-V=100,\qquad D=8
-\]
-
-The embedding matrix is:
-
-\[
-W\in\mathbb{R}^{V\times D}
-\]
-
-Therefore:
-
-\[
-W\in\mathbb{R}^{100\times8}
-\]
-
-Each row represents one token, and each column represents one dimension of its vector.
-
-The total number of parameters is:
-
-\[
-N=V\times D=100\times8=800
-\]
-
-**Important:** Token IDs are identifiers, not meaningful numerical representations. The embedding layer provides trainable vector representations for them.
-
----
-
-## 2. Structure: `embedding.h`
+## API
 
 ```c
 typedef struct
@@ -43,220 +18,151 @@ typedef struct
     size_t embedding_dim;
     float *weights;
 } Embedding;
+
+int embedding_init(
+    Embedding *embedding,
+    size_t vocab_size,
+    size_t embedding_dim
+);
+
+void embedding_free(Embedding *embedding);
+float *embedding_get(Embedding *embedding, size_t token_id);
+void embedding_zero(Embedding *embedding);
+void embedding_randomize(Embedding *embedding, float limit, RNG *rng);
 ```
 
-- `vocab_size`: Number of tokens \(V\).
-- `embedding_dim`: Number of dimensions per token \(D\).
-- `weights`: Pointer to the embedding matrix stored in contiguous memory.
+### Structure fields
 
-We store the matrix in one flat array rather than allocating each row separately.
+| Field | Meaning |
+| --- | --- |
+| `vocab_size` | Number of token IDs represented by the table, `V`. |
+| `embedding_dim` | Number of values in each token vector, `D`. |
+| `weights` | Contiguous storage for all `V × D` `float` values. |
 
-### Memory indexing
+## Data layout
 
-The mathematical matrix element \(W_{t,j}\) is stored at:
+For a vocabulary of size `V` and vectors of dimension `D`, the weight matrix
+has shape:
 
-\[
-\boxed{\text{index}=tD+j}
-\]
-
-where \(t\) is the token ID and \(j\) is the embedding dimension index.
-
-For example, if \(D=8\), token 2 begins at index:
-
-\[
-2\times8=16
-\]
-
-Its eight values occupy indices 16 through 23.
-
----
-
-## 3. Memory Allocation: `embedding_init()`
-
-```c
-size_t total_elements = vocab_size * embedding_dim;
-
-embedding->weights =
-    malloc(total_elements * sizeof(float));
+```text
+weights[V][D]
 ```
 
-The total number of elements is:
+The implementation stores that matrix as one flat array. The value at row
+`token_id` and column `dimension` is located at:
 
-\[
-N=VD
-\]
-
-The required memory is:
-
-\[
-\boxed{M=VD\times\operatorname{sizeof}(\texttt{float})}
-\]
-
-For 100 tokens with 8 dimensions each, assuming 4-byte floats:
-
-\[
-M=100\times8\times4=3200\text{ bytes}
-\]
-
-We check for zero dimensions and integer overflow before calculating the allocation size.
-
-`malloc()` allocates memory but **does not initialize its values**. Therefore, we must zero or randomize the weights before reading them.
-
-The function returns `0` on success and `-1` on failure.
-
----
-
-## 4. Token Lookup: `embedding_get()`
-
-```c
-size_t offset = token_id * embedding->embedding_dim;
-
-return &embedding->weights[offset];
+```text
+weights[token_id * embedding_dim + dimension]
 ```
 
-Mathematically, retrieving a token embedding means selecting one row:
+The table contains `V × D` values and requires:
 
-\[
-\boxed{e_t=W_{t,:}}
-\]
-
-The offset is:
-
-\[
-\boxed{o=tD}
-\]
-
-The function returns a pointer to the beginning of that row. It does not create a copy of the vector.
-
-We check that the token ID is valid:
-
-\[
-0\leq t<V
-\]
-
-If the embedding is invalid or the token ID is out of range, the function returns `NULL`.
-
----
-
-## 5. Zero Initialization: `embedding_zero()`
-
-```c
-size_t total_elements =
-    embedding->vocab_size * embedding->embedding_dim;
-
-for (size_t i = 0; i < total_elements; i++)
-{
-    embedding->weights[i] = 0.0f;
-}
+```text
+V × D × sizeof(float)
 ```
 
-This sets every parameter to zero:
+bytes of storage.
 
-\[
-\boxed{W_{t,j}=0}
-\]
+## Usage
 
-for all valid rows and columns.
-
-Time complexity:
-
-\[
-O(VD)
-\]
-
-Zero initialization is useful for testing and resetting weights. However, initializing every neural-network weight to zero is generally unsuitable for training because it can cause symmetry problems.
-
----
-
-## 6. Random Initialization: `embedding_randomize()`
-
-Our implementation uses the RNG module to generate pseudorandom values.
-
-First, we convert a 32-bit unsigned integer into a floating-point value:
-
-```c
-double r = (double)rng_next(rng) / 4294967296.0;
-```
-
-Since:
-
-\[
-4294967296=2^{32}
-\]
-
-we obtain:
-
-\[
-0\leq r<1
-\]
-
-Next, we map the value into a symmetric interval:
-
-```c
-embedding->weights[i] =
-    (float)((2.0 * r - 1.0) * (double)limit);
-```
-
-The mathematical transformation is:
-
-\[
-\boxed{w=(2r-1)L}
-\]
-
-where \(L\) is the positive limit.
-
-Therefore:
-
-\[
--L\leq w<L
-\]
-
-For example, if \(L=0.05\):
-
-\[
--0.05\leq w<0.05
-\]
-
-Using the same RNG seed produces the same sequence of values, making our initialization reproducible.
-
-This is a simple initialization strategy; later, we can implement initialization rules appropriate to the complete transformer architecture.
-
----
-
-## 7. Memory Cleanup: `embedding_free()`
-
-```c
-free(embedding->weights);
-
-embedding->weights = NULL;
-embedding->vocab_size = 0;
-embedding->embedding_dim = 0;
-```
-
-`free()` releases dynamically allocated memory.
-
-We then reset the pointer and dimensions so the structure no longer represents an allocated embedding.
-
-Our module supports safely freeing a zero-initialized structure and freeing the same structure again after it has been reset.
-
-A new embedding should be initialized like this:
+Always start with a zero-initialized structure:
 
 ```c
 Embedding embedding = {0};
+RNG rng;
+
+if (embedding_init(&embedding, 100, 8) != 0)
+{
+    /* Allocation or input validation failed. */
+    return 1;
+}
+
+rng_init(&rng, 123);
+embedding_randomize(&embedding, 0.05f, &rng);
+
+float *token_vector = embedding_get(&embedding, 2);
+if (token_vector != NULL)
+{
+    /* token_vector points to 8 values in this example. */
+}
+
+embedding_free(&embedding);
 ```
 
-Do not call `embedding_init()` again on an embedding that already owns allocated memory. Free it first.
+`embedding_get()` returns a pointer into the table; it does not allocate or
+copy a vector. Do not use that pointer after `embedding_free()` or after the
+embedding has otherwise been released.
 
----
+## Initialization and error handling
 
-## Summary
+`embedding_init()` returns:
 
-The embedding layer implements:
+- `0` on success.
+- `-1` when the embedding pointer is `NULL`, either dimension is zero, the
+  requested allocation would overflow `size_t`, or memory allocation fails.
 
-\[
-\boxed{\text{Token ID }t\longrightarrow W_{t,:}}
-\]
+The implementation checks both multiplication steps before allocating:
 
-It stores a trainable matrix of shape \(V\times D\) and provides functions to allocate, retrieve, initialize, and free its weights.
+1. `vocab_size * embedding_dim`
+2. `total_elements * sizeof(float)`
 
-Currently, the module initializes and retrieves parameters; **it does not yet train the embeddings**.
+`malloc()` does not initialize the allocated values. Call `embedding_zero()` or
+`embedding_randomize()` before reading the weights.
+
+## Operations
+
+### `embedding_get()`
+
+Returns the first value of the row for `token_id`. A `NULL` pointer is returned
+when the embedding is invalid, has no allocated weights, or `token_id` is
+outside the range `[0, vocab_size)`.
+
+Lookup is `O(1)`.
+
+### `embedding_zero()`
+
+Sets every weight to `0.0f`:
+
+```text
+W[token_id][dimension] = 0
+```
+
+The operation is `O(V × D)`. Zero initialization is useful for tests and
+resetting a table, but is generally not a suitable neural-network
+initialization strategy because it can preserve symmetry between parameters.
+
+### `embedding_randomize()`
+
+Generates each weight using the supplied [`RNG`](../rng/rng.h) and maps the
+result to the interval `[-limit, limit)`:
+
+```text
+r = rng_next(rng) / 2^32
+w = (2r - 1) × limit
+```
+
+The function does nothing when the embedding, RNG, or weight storage is
+invalid, or when `limit` is not positive. Reusing the same RNG seed produces
+the same sequence of weights.
+
+### `embedding_free()`
+
+Releases the weight storage and resets all structure fields to zero. It is safe
+to call with `NULL` and safe to call more than once.
+
+Do not call `embedding_init()` on a structure that already owns allocated
+weights. Call `embedding_free()` first to avoid leaking the existing
+allocation.
+
+## Complexity
+
+| Operation | Time | Additional storage |
+| --- | ---: | ---: |
+| `embedding_init()` | `O(V × D)` allocation size | `O(V × D)` |
+| `embedding_get()` | `O(1)` | `O(1)` |
+| `embedding_zero()` | `O(V × D)` | `O(1)` |
+| `embedding_randomize()` | `O(V × D)` | `O(1)` |
+| `embedding_free()` | `O(1)` | `O(1)` |
+
+The layer currently stores and initializes parameters, but it does not train
+them or compute gradients.

@@ -1,23 +1,18 @@
-# Random Number Generator (RNG)
+# PCG32 pseudorandom number generator
 
-## 1. Concept
+The RNG module provides deterministic pseudorandom values for model
+initialization and reproducible experiments. It implements the PCG32
+XSH-RR output function using a 64-bit internal state and 32-bit results.
 
-Neural networks need initial parameter values. Our embedding layer uses a **pseudorandom number generator (PRNG)** to initialize its weights.
+Implementation:
 
-A PRNG generates a sequence of numbers from an initial value called a *seed*.
+- [`rng.h`](./rng.h)
+- [`rng.c`](./rng.c)
 
-- Same seed → same sequence.
-- Different seeds → generally different sequences.
+> This generator is not cryptographically secure. Do not use it for passwords,
+> cryptographic keys, tokens, or security-sensitive decisions.
 
-This makes experiments reproducible.
-
-Our implementation uses **PCG32 (Permuted Congruential Generator)**, which maintains a 64-bit internal state and produces 32-bit pseudorandom outputs.
-
-> This is a deterministic PRNG, not a cryptographically secure random-number generator.
-
----
-
-## 2. Structure: `rng.h`
+## API
 
 ```c
 typedef struct
@@ -25,208 +20,108 @@ typedef struct
     uint64_t state;
     uint64_t increment;
 } RNG;
-```
 
-- `state`: The generator's current 64-bit internal state.
-- `increment`: A constant added during each state transition.
-
-We use `uint64_t` because the algorithm requires unsigned 64-bit arithmetic.
-
-The header also declares:
-
-```c
 void rng_init(RNG *rng, uint64_t seed);
 uint32_t rng_next(RNG *rng);
 ```
 
-`rng_init()` initializes the generator, while `rng_next()` advances its state and returns a 32-bit result.
+| Field or function | Description |
+| --- | --- |
+| `state` | Current 64-bit generator state. |
+| `increment` | Stream increment used by the state transition. |
+| `rng_init()` | Initializes a generator from a seed. |
+| `rng_next()` | Advances the generator and returns a `uint32_t`. |
 
----
-
-## 3. State Initialization: `rng_init()`
-
-Our implementation:
-
-```c
-rng->state = 0;
-rng->increment = UINT64_C(1442695040888963407);
-
-rng_next(rng);
-rng->state += seed;
-rng_next(rng);
-```
-
-The generator is initialized in three stages:
-
-1. Start with a zero state and set the increment.
-2. Advance the generator once.
-3. Add the seed to the state and advance it again.
-
-This sequence initializes the internal state before producing values for the caller.
-
-`UINT64_C(...)` specifies an integer constant suitable for 64-bit unsigned arithmetic.
-
-The function checks whether `rng` is `NULL` before accessing its fields.
-
----
-
-## 4. Generating a Number: `rng_next()`
-
-### Step 1: Save the old state
+## Usage
 
 ```c
-uint64_t oldstate = rng->state;
+RNG rng;
+rng_init(&rng, 123);
+
+uint32_t value = rng_next(&rng);
 ```
 
-We preserve the current state because it is used both to calculate the next state and to generate the output.
+The same seed produces the same sequence on every run, provided the same
+implementation and unsigned integer widths are used. A `NULL` pointer passed
+to either function is handled safely: `rng_init()` does nothing and
+`rng_next()` returns `0`.
 
-### Step 2: Update the state
+## How it works
 
-```c
-rng->state =
-    oldstate * UINT64_C(6364136223846793005)
-    + rng->increment;
+### State transition
+
+Each call saves the old state and advances the generator with a linear
+congruential step:
+
+```text
+s[n+1] = (6364136223846793005 × s[n] + increment) mod 2^64
 ```
 
-Mathematically:
+Unsigned 64-bit arithmetic in C wraps modulo `2^64`.
 
-\[
-\boxed{s_{n+1}=(a s_n+c)\bmod 2^{64}}
-\]
+### Output permutation
 
-where:
+The output is derived from the old state in three stages:
 
-- \(s_n\) is the current state.
-- \(a=6364136223846793005\).
-- \(c\) is the increment.
-- \(s_{n+1}\) is the next state.
+1. XOR and shift the state to produce a 32-bit value.
+2. Use the top five state bits as a rotation amount.
+3. Rotate the 32-bit value to produce the result.
 
-Unsigned 64-bit arithmetic in C wraps modulo \(2^{64}\).
-
-The state transition is deterministic: the same current state and increment produce the same next state.
-
-### Step 3: Mix bits from the old state
+The relevant operations in the implementation are:
 
 ```c
 uint32_t xorshifted =
     (uint32_t)(((oldstate >> 18u) ^ oldstate) >> 27u);
-```
 
-This combines a shifted version of the state with the original state using XOR (`^`), then shifts the result again.
-
-The operations rearrange and mix bits to produce a 32-bit intermediate value.
-
-The cast to `uint32_t` retains the low 32 bits of the result.
-
-### Step 4: Calculate the rotation amount
-
-```c
 uint32_t rotation = (uint32_t)(oldstate >> 59u);
-```
 
-Shifting right by 59 positions extracts the top five bits of the old 64-bit state.
-
-Therefore:
-
-\[
-0\leq rotation<32
-\]
-
-### Step 5: Rotate the bits
-
-```c
 return (xorshifted >> rotation)
      | (xorshifted << ((-(int32_t)rotation) & 31));
 ```
 
-This performs a **32-bit rotate-right** operation.
+The rotation is always in `[0, 31]`, so the expression performs a valid
+32-bit rotate-right operation.
 
-Unlike an ordinary shift, a rotation moves bits that leave one end of the value back to the other end.
+### Seed initialization
 
-The expression:
+`rng_init()` sets a fixed stream increment and performs a short warm-up
+sequence:
 
-```c
-(-(int32_t)rotation) & 31
-```
+1. Set the state to zero.
+2. Set the increment to `1442695040888963407`.
+3. Advance once.
+4. Add the caller's seed to the state.
+5. Advance again.
 
-calculates the complementary shift amount for the 32-bit rotation.
+This ensures that the seed is incorporated before values are returned to the
+caller.
 
-The bitwise OR (`|`) combines the two shifted values.
+## Generating floating-point values
 
-Together, these operations implement the output permutation used by PCG32's XSH-RR variant.
-
-The function returns the resulting `uint32_t`.
-
-If the input pointer is `NULL`, our implementation returns zero.
-
----
-
-## 5. Using the RNG for Embeddings
-
-In `embedding_randomize()`, we call:
+The embedding module converts the 32-bit output to a value in `[0, 1)`:
 
 ```c
-rng_next(rng);
+double r = (double)rng_next(rng) / 4294967296.0;
 ```
 
-This produces an integer in the range:
+It then maps the result to a symmetric interval:
 
-\[
-0\leq x\leq 2^{32}-1
-\]
+```c
+float weight = (float)((2.0 * r - 1.0) * (double)limit);
+```
 
-We convert it to a floating-point value:
+This produces values in `[-limit, limit)`, subject to floating-point
+representation.
 
-\[
-r=\frac{x}{2^{32}}
-\]
+## Complexity
 
-Therefore:
+Each call to `rng_next()` performs a fixed number of arithmetic and bitwise
+operations:
 
-\[
-0\leq r<1
-\]
+- Time: `O(1)`
+- Additional storage: `O(1)`
+- Output range: `0` through `UINT32_MAX`
 
-Then we map it to the desired initialization interval:
-
-\[
-\boxed{w=(2r-1)L}
-\]
-
-where \(L>0\) is the initialization limit.
-
-This connects our RNG module to the embedding module.
-
----
-
-## 6. Complexity and Limitations
-
-Each call to `rng_next()` performs a fixed number of arithmetic and bitwise operations.
-
-Therefore:
-
-\[
-\boxed{\text{Time complexity}=O(1)}
-\]
-
-The generator stores only its state and increment:
-
-\[
-\boxed{\text{State storage}=O(1)}
-\]
-
-PCG32 is appropriate for reproducible model initialization and ordinary simulation tasks. It should not be used for passwords, cryptographic keys, or security-sensitive randomness.
-
----
-
-## Summary
-
-Our RNG module implements PCG32 using:
-
-- A 64-bit internal state.
-- A fixed increment.
-- A deterministic state transition.
-- Bitwise mixing and rotation to generate 32-bit outputs.
-- Seed-based initialization for reproducibility.
-
-The embedding module uses these outputs to initialize its weight matrix with pseudorandom floating-point values.
+The generator is appropriate for reproducible initialization and ordinary
+simulation. It does not provide cryptographic security, entropy from the
+operating system, or protection against prediction.
