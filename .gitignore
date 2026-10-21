@@ -1,0 +1,12 @@
+# Compiled executables
+embedding_test
+embedding_test_san
+*.o
+
+# macOS files
+.DS_Store
+*.dSYM/
+
+# Editor files
+.vscode/
+.idea/

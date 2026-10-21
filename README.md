@@ -113,5 +113,3 @@ Each component is implemented as an independent C module, with its own header, s
 
 **Next module:** `tensor/`
 ```
-
-**Note:** This diagram is a simplified GPT architecture. The residual connections and normalization order are schematic; we will define their exact mathematical operations when implementing the transformer block.# GPT.c
