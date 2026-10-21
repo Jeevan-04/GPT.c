@@ -112,4 +112,3 @@ Each component is implemented as an independent C module, with its own header, s
 **Completed:** `rng/`, `embedding/`
 
 **Next module:** `tensor/`
-```
