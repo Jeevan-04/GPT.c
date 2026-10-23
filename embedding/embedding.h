@@ -2,7 +2,7 @@
 #define EMBEDDING_H
 
 #include <stddef.h>
-#include "../rng/rng.h"
+#include "../ops/rng/rng.h"
 
 typedef struct
 {
